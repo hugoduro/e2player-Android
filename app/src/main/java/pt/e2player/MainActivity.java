@@ -43,6 +43,7 @@ import androidx.media3.ui.PlayerView;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -84,6 +85,11 @@ public class MainActivity extends Activity {
     private StreamProxy proxy;
     private OpenWebif owif;
     private ExecutorService pool;
+    /** EPG pedido um bouquet de cada vez, para não sobrecarregar o OpenWebif. */
+    private ExecutorService epgPool;
+    private final Map<String, Long> epgOk = new HashMap<>();
+    private final Map<String, Integer> epgFail = new HashMap<>();
+    private final Set<String> epgPending = new HashSet<>();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Map<String, Object> picons = new HashMap<>();
     private static final Object LOADING = new Object(), NONE = new Object();
@@ -125,6 +131,7 @@ public class MainActivity extends Activity {
         setContentView(root);
 
         pool = Executors.newFixedThreadPool(4);
+        epgPool = Executors.newSingleThreadExecutor();
         initPlayer();
         ui.postDelayed(ticker, 1000);
         if (prefs.getString("box", "").isEmpty()) showSettings(true);
@@ -150,6 +157,7 @@ public class MainActivity extends Activity {
         if (player != null) player.release();
         if (proxy != null) proxy.stop();
         pool.shutdownNow();
+        epgPool.shutdownNow();
     }
 
     private final Runnable ticker = new Runnable() {
@@ -344,6 +352,9 @@ public class MainActivity extends Activity {
         model.load(new ArrayList<OpenWebif.Bouquet>());
         model.groups.clear();
         picons.clear();
+        epgOk.clear();
+        epgFail.clear();
+        epgPending.clear();
         status = "A carregar canais de " + box + "…";
         tv.invalidate();
         owif = new OpenWebif(box, web, user, pass);
@@ -388,6 +399,7 @@ public class MainActivity extends Activity {
         model.load(bq);
         selectGroup(0);
         Model.Channel last = model.byKey.get(Model.normref(prefs.getString("last", "")));
+        refreshEpg(last);   // antes de tudo: o bouquet do último canal vem primeiro
         if (last != null) {
             play(last, last.group, false);
             goFull();
@@ -395,35 +407,72 @@ public class MainActivity extends Activity {
             focusGroups = true;
             tv.invalidate();
         }
-        refreshEpg();
     }
 
     private final Runnable epgRefresher = new Runnable() {
         public void run() {
-            refreshEpg();
+            refreshEpg(playing);
         }
     };
 
-    private void refreshEpg() {
-        for (Model.Group g : model.bouquets) if (g.bref != null) loadNowNext(g.bref);
+    private void refreshEpg(Model.Channel first) {
+        List<String> brefs = new ArrayList<>();
+        for (Model.Group g : model.bouquets) if (g.bref != null) brefs.add(g.bref);
+        if (first != null && first.group.bref != null && brefs.remove(first.group.bref))
+            brefs.add(0, first.group.bref);
+        for (String b : brefs) loadNowNext(b);
         ui.removeCallbacks(epgRefresher);
         ui.postDelayed(epgRefresher, 10 * 60 * 1000);
     }
 
     private void loadNowNext(final String bref) {
+        if (epgPending.contains(bref)) return;
+        epgPending.add(bref);
         final OpenWebif ow = owif;
+        final int gen = loadGen;
         model.markEpgTried(bref);
-        pool.execute(new Runnable() {
+        epgPool.execute(new Runnable() {
             public void run() {
-                final Map<String, List<Event>> d = ow.epgNowNext(bref);
+                Map<String, List<Event>> d = null;
+                Exception err = null;
+                try {
+                    d = ow.epgNowNext(bref);
+                } catch (Exception e) {
+                    err = e;
+                }
+                final Map<String, List<Event>> fd = d;
+                final Exception fe = err;
                 ui.post(new Runnable() {
                     public void run() {
-                        model.mergeEpg(bref, d);
-                        tv.invalidate();
+                        if (gen == loadGen) onNowNext(bref, fd, fe);
                     }
                 });
             }
         });
+    }
+
+    private void onNowNext(final String bref, Map<String, List<Event>> d, Exception err) {
+        epgPending.remove(bref);
+        if (err != null || d == null || d.isEmpty()) {
+            Integer n0 = epgFail.get(bref);
+            int n = (n0 == null ? 0 : n0) + 1;
+            epgFail.put(bref, n);
+            long delay = Math.min(15L * n, 120L);
+            Log.w(TAG, "EPG de " + bref + (err != null ? " falhou: " + err.getMessage() : " veio vazio")
+                    + " (tentativa " + n + ") - nova tentativa em " + delay + "s");
+            if (n <= 8) {
+                ui.postDelayed(new Runnable() {
+                    public void run() {
+                        loadNowNext(bref);
+                    }
+                }, delay * 1000);
+            }
+            return;
+        }
+        epgFail.remove(bref);
+        epgOk.put(bref, System.currentTimeMillis());
+        model.mergeEpg(bref, d);
+        tv.invalidate();
     }
 
     private void refreshStaleEpg() {
@@ -434,7 +483,16 @@ public class MainActivity extends Activity {
             chans.addAll(l.subList(Math.min(ctop, l.size()), Math.min(ctop + 30, l.size())));
         }
         if (playing != null) chans.add(playing);
-        Set<String> stale = model.staleBrefs(chans, System.currentTimeMillis() / 1000, 60000);
+        Set<String> stale = new HashSet<>(model.staleBrefs(chans, System.currentTimeMillis() / 1000, 60000));
+        // bouquets visíveis cujo EPG nunca chegou, depois de esgotadas as tentativas
+        for (Model.Channel ch : chans) {
+            String b = ch.group.bref;
+            Integer n = b != null ? epgFail.get(b) : null;
+            if (b != null && !epgOk.containsKey(b) && n != null && n > 8) {
+                epgFail.put(b, 0);
+                stale.add(b);
+            }
+        }
         for (String b : stale) loadNowNext(b);
     }
 

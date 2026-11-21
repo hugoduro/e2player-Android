@@ -168,7 +168,12 @@ public class MainActivity extends Activity {
         DefaultExtractorsFactory ef = new DefaultExtractorsFactory()
                 .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
                         | DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS);
-        DefaultRenderersFactory rf = new DefaultRenderersFactory(this).setEnableDecoderFallback(true);
+        // EXTENSION_RENDERER_MODE_ON: usa o descodificador do sistema quando existe e o
+        // FFmpeg (MP2, AC-3, ...) quando o sistema não suporta o formato
+        DefaultRenderersFactory rf = new DefaultRenderersFactory(this)
+                .setEnableDecoderFallback(true)
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
+        Log.i(TAG, "descodificador FFmpeg disponível: " + ffmpegAvailable());
         DefaultLoadControl lc = new DefaultLoadControl.Builder()
                 .setBufferDurationsMs(3000, 30000, 1000, 2000).build();
         player = new ExoPlayer.Builder(this, rf)
@@ -183,12 +188,44 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public void onTracksChanged(Tracks tracks) {
+                checkAudio(tracks);
+            }
+
+            @Override
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_ENDED) onPlaybackFailed("fim do stream");
                 if (state == Player.STATE_READY) retry = 0;
             }
         });
         playerView.setPlayer(player);
+    }
+
+    private static boolean ffmpegAvailable() {
+        try {
+            Class.forName("androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer");
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
+    /** Avisa se o canal tem áudio mas nenhuma faixa pode ser descodificada. */
+    private void checkAudio(Tracks tracks) {
+        boolean hasAudio = false, playable = false;
+        String mime = null;
+        for (Tracks.Group g : tracks.getGroups()) {
+            if (g.getType() != C.TRACK_TYPE_AUDIO) continue;
+            for (int i = 0; i < g.length; i++) {
+                hasAudio = true;
+                if (mime == null) mime = g.getTrackFormat(i).sampleMimeType;
+                if (g.isTrackSupported(i)) playable = true;
+            }
+        }
+        if (hasAudio && !playable) {
+            Log.w(TAG, "áudio não suportado: " + mime + " (FFmpeg: " + ffmpegAvailable() + ")");
+            toast("Sem descodificador para o áudio deste canal (" + mime + ")", 6000);
+        }
     }
 
     void play(Model.Channel ch, Model.Group group, boolean keepRetry) {

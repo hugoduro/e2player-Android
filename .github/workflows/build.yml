@@ -4,6 +4,11 @@ on:
   push:
   workflow_dispatch:
 
+env:
+  MEDIA3_VERSION: "1.4.1"
+  NDK_VERSION: "26.1.10909125"
+  FFMPEG_DECODERS: "mp2 mp3 aac ac3 eac3"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -15,11 +20,38 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # O descodificador FFmpeg demora ~10 min a compilar: fica em cache
+      - name: Cache do descodificador FFmpeg
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: app/libs
+          key: ffmpeg-media3-${{ env.MEDIA3_VERSION }}-${{ env.FFMPEG_DECODERS }}-v1
+
+      - name: Compilar descodificador FFmpeg (MP2, AC-3, ...)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          set -ex
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" > /dev/null
+          NDK_PATH="$ANDROID_HOME/ndk/${NDK_VERSION}"
+          git clone --depth 1 --branch "${MEDIA3_VERSION}" https://github.com/androidx/media.git /tmp/media
+          FFMPEG_MODULE_PATH=/tmp/media/libraries/decoder_ffmpeg/src/main
+          cd "$FFMPEG_MODULE_PATH/jni"
+          git clone --depth 1 --branch release/6.0 https://github.com/FFmpeg/FFmpeg.git ffmpeg
+          ./build_ffmpeg.sh "$FFMPEG_MODULE_PATH" "$NDK_PATH" linux-x86_64 21 ${FFMPEG_DECODERS}
+          cd /tmp/media
+          ./gradlew :lib-decoder-ffmpeg:assembleRelease --no-daemon
+          mkdir -p "$GITHUB_WORKSPACE/app/libs"
+          AAR=$(find /tmp/media/libraries/decoder_ffmpeg -name "*release*.aar" | head -1)
+          test -n "$AAR"
+          cp "$AAR" "$GITHUB_WORKSPACE/app/libs/media3-decoder-ffmpeg.aar"
+          ls -la "$GITHUB_WORKSPACE/app/libs"
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
 
-      - name: Compilar
+      - name: Compilar APK
         run: gradle assembleDebug --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4

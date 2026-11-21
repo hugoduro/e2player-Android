@@ -1,25 +1,7 @@
 # e2player para Android TV
 
-Player de TV ao estilo MAG (Infomir) para boxes Enigma2, com o corretor de
+Player Android TV para streaming de boxes Enigma2, com o corretor de
 PAT/PMT (e2proxy) embutido. Motor de vídeo: Media3 / ExoPlayer.
-
-## Obter o APK sem instalar nada (GitHub Actions)
-
-1. Cria uma conta gratuita em https://github.com (se ainda não tiveres).
-2. Cria um repositório novo (pode ser **privado**): botão **New** › dá-lhe um
-   nome (ex.: `e2player`) › **Create repository**.
-3. Na página do repositório: **uploading an existing file** (ou *Add file › Upload files*)
-   e arrasta **todo o conteúdo** desta pasta (incluindo a pasta `.github`).
-   Carrega em **Commit changes**.
-   - Se a pasta `.github` não aparecer (no Mac está oculta: Cmd+Shift+. no Finder),
-     cria-a à mão: *Add file › Create new file*, nome
-     `.github/workflows/build.yml`, e cola o conteúdo desse ficheiro.
-4. Abre o separador **Actions**. A compilação arranca sozinha (~5 minutos).
-   Se não arrancar: *Compilar APK › Run workflow*.
-5. Quando ficar verde ✔, abre a execução e, em **Artifacts**, descarrega
-   `e2player-apk` (é um .zip com o `app-debug.apk` lá dentro).
-6. Se ficar vermelho ✖, abre o passo "Compilar", copia as últimas linhas do erro
-   e envia-mas.
 
 ## Instalar na Android TV
 

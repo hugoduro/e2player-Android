@@ -171,12 +171,13 @@ public final class OpenWebif {
         return out;
     }
 
-    /** normref -> eventos (agora e seguinte) de um bouquet. */
-    public Map<String, List<Event>> epgNowNext(String bref) {
+    /** normref -> eventos (agora e seguinte) de um bouquet. Falha se os dois pedidos falharem. */
+    public Map<String, List<Event>> epgNowNext(String bref) throws IOException {
         Map<String, List<Event>> out = new HashMap<>();
+        List<String> errors = new ArrayList<>();
         for (String p : new String[]{"/web/epgnow?bRef=", "/web/epgnext?bRef="}) {
             try {
-                for (Event ev : events(xml(p + q(bref), 30000))) {
+                for (Event ev : events(xml(p + q(bref), 45000))) {
                     String k = Model.normref(ev.ref);
                     List<Event> l = out.get(k);
                     if (l == null) {
@@ -185,9 +186,11 @@ public final class OpenWebif {
                     }
                     l.add(ev);
                 }
-            } catch (IOException ignored) {
+            } catch (IOException e) {
+                errors.add(p.substring(0, p.indexOf('?')) + ": " + e.getMessage());
             }
         }
+        if (errors.size() == 2) throw new IOException(errors.get(0) + "; " + errors.get(1));
         for (List<Event> l : out.values()) Collections.sort(l, (a, b) -> Long.compare(a.start, b.start));
         return out;
     }

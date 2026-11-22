@@ -88,7 +88,7 @@ public class MainActivity extends Activity {
     private StreamProxy proxy;
     private OpenWebif owif;
     private ExecutorService pool;
-    /** EPG pedido um bouquet de cada vez, para não sobrecarregar o OpenWebif. */
+    /** EPG pedido um bouquet de cada vez, para não sobrecarregar o OpenWebif.  */
     private ExecutorService epgPool;
     private final Map<String, Long> epgOk = new HashMap<>();
     private final Map<String, Integer> epgFail = new HashMap<>();

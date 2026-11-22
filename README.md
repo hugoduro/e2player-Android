@@ -1,6 +1,6 @@
 # e2player for Android TV
 
-Android TV player for streaming from Enigma2 STB, featuring a built-in PAT/PMT fix engine (e2proxy). Video engine: Media3 / ExoPlayer.
+Android TV player for streaming from Enigma2 STB, featuring a built-in PAT/PMT fix engine (e2proxy). Video engine: Media3 / ExoPlayer (Fire TV compatible).
 
 ## Installing on Android TV
 

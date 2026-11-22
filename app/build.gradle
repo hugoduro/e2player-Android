@@ -7,11 +7,31 @@ android {
     compileSdk 34
 
     defaultConfig {
-        applicationId "pt.e2player"
         minSdk 21
         targetSdk 34
         versionCode 1
         versionName "1.0"
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    // Duas apps a partir do mesmo código: muda só a fonte dos canais
+    flavorDimensions.add("fonte")
+    productFlavors {
+        enigma2 {
+            dimension "fonte"
+            applicationId "pt.e2player"
+            resValue "string", "app_name", "e2player"
+            buildConfigField "boolean", "TVH", "false"
+        }
+        tvheadend {
+            dimension "fonte"
+            applicationId "pt.tvhplayer"
+            resValue "string", "app_name", "TVH Player"
+            buildConfigField "boolean", "TVH", "true"
+        }
     }
 
     compileOptions {

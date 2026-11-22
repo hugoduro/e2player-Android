@@ -122,9 +122,40 @@ public final class BoxScanner {
         }
     }
 
-    /** Testa todos os hosts em paralelo. Pode ser cancelado. Resultado ordenado por IP. */
-    public static List<Box> scan(List<String> hosts, final int port, int threads, final Listener l,
-                                 final AtomicBoolean cancel) {
+    /** Testa um IP: devolve o servidor se responder como TVHeadend, senão null. */
+    public static Box probeTvh(String ip, int port, int connectMs, int readMs) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL("http://" + ip + ":" + port + "/api/serverinfo").openConnection();
+            c.setConnectTimeout(connectMs);
+            c.setReadTimeout(readMs);
+            c.setInstanceFollowRedirects(false);
+            int code = c.getResponseCode();
+            if (code == 401) {
+                String realm = String.valueOf(c.getHeaderField("WWW-Authenticate")).toLowerCase();
+                return realm.contains("tvheadend") ? new Box(ip, "TVHeadend", true) : null;
+            }
+            if (code != 200) return null;
+            InputStream in = c.getInputStream();
+            ByteArrayOutputStream o = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0 && o.size() < 64 * 1024) o.write(buf, 0, n);
+            String txt = new String(o.toByteArray(), StandardCharsets.UTF_8);
+            if (!txt.contains("sw_version")) return null;
+            java.util.Map<String, Object> m = Json.obj(Json.parse(txt));
+            String name = Json.str(m, "name");
+            return new Box(ip, (name.isEmpty() ? "TVHeadend" : name) + " " + Json.str(m, "sw_version"), false);
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    /** Testa todos os hosts em paralelo (OpenWebif ou TVHeadend). Pode ser cancelado. Ordenado por IP. */
+    public static List<Box> scan(List<String> hosts, final int port, int threads, final boolean tvh,
+                                 final Listener l, final AtomicBoolean cancel) {
         final List<Box> found = Collections.synchronizedList(new ArrayList<Box>());
         final AtomicInteger done = new AtomicInteger();
         final int total = hosts.size();
@@ -133,7 +164,7 @@ public final class BoxScanner {
             ex.execute(new Runnable() {
                 public void run() {
                     if (cancel == null || !cancel.get()) {
-                        Box b = probe(h, port, 700, 3000);
+                        Box b = tvh ? probeTvh(h, port, 700, 3000) : probe(h, port, 700, 3000);
                         if (b != null) found.add(b);
                     }
                     int d = done.incrementAndGet();

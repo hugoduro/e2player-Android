@@ -43,6 +43,8 @@ public final class Model {
     public final Map<Integer, Channel> byNum = new HashMap<>();
     public final Map<String, Channel> byKey = new HashMap<>();
     public final List<String> favorites = new ArrayList<>();
+    /** "Todos os canais" ordenado pelo número (TVHeadend) em vez da ordem dos grupos. */
+    public boolean sortAllByNumber = false;
     private final Map<String, List<Event>> nownext = new HashMap<>();
     private final Map<String, Long> epgTime = new HashMap<>();
 
@@ -65,10 +67,15 @@ public final class Model {
         for (OpenWebif.Bouquet b : list) {
             Group g = new Group(b.name, b.ref, new ArrayList<Channel>(), Group.BOUQUET);
             for (String[] s : b.services) {
-                num++;
-                Channel ch = new Channel(num, s[1].isEmpty() ? s[0] : s[1], s[0], g);
+                int n;
+                if (s.length > 2 && s[2] != null && !s[2].isEmpty()) {   // número dado pela fonte
+                    n = Integer.parseInt(s[2]);
+                } else {
+                    n = ++num;
+                }
+                Channel ch = new Channel(n, s[1].isEmpty() ? s[0] : s[1], s[0], g);
                 g.channels.add(ch);
-                byNum.put(num, ch);
+                if (!byNum.containsKey(n)) byNum.put(n, ch);
                 if (!byKey.containsKey(ch.key)) byKey.put(ch.key, ch);
             }
             bouquets.add(g);
@@ -83,7 +90,14 @@ public final class Model {
         if (!favs.isEmpty()) groups.add(new Group("★ Favoritos", null, favs, Group.FAV));
         groups.addAll(bouquets);
         List<Channel> all = new ArrayList<>();
-        for (Group g : bouquets) all.addAll(g.channels);
+        Set<String> seen = new HashSet<>();
+        for (Group g : bouquets)
+            for (Channel ch : g.channels)
+                if (seen.add(ch.key)) all.add(byKey.containsKey(ch.key) ? byKey.get(ch.key) : ch);
+        if (sortAllByNumber) {
+            java.util.Collections.sort(all, (a, b) -> a.num != b.num ? Integer.compare(a.num, b.num)
+                    : a.name.compareToIgnoreCase(b.name));
+        }
         if (!all.isEmpty()) groups.add(new Group("Todos os canais", null, all, Group.ALL));
         groups.add(new Group("⚙ Definições", null, new ArrayList<Channel>(), Group.SETTINGS));
     }

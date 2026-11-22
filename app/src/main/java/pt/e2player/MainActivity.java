@@ -56,8 +56,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import pt.e2player.core.BoxScanner;
 import pt.e2player.core.Event;
 import pt.e2player.core.Model;
+import pt.e2player.core.ChannelSource;
+import pt.e2player.core.E2Source;
 import pt.e2player.core.OpenWebif;
-import pt.e2player.core.StreamProxy;
+import pt.e2player.core.TvhClient;
 import pt.e2player.core.TsFixer;
 
 @OptIn(markerClass = UnstableApi.class)
@@ -88,8 +90,12 @@ public class MainActivity extends Activity {
     private PlayerView playerView;
     private TvView tv;
     private ExoPlayer player;
-    private StreamProxy proxy;
-    private OpenWebif owif;
+    /** Enigma2 (OpenWebif + proxy) ou TVHeadend (direto), conforme a variante da app. */
+    private ChannelSource source;
+    private Object playToken;
+    /** Variante TVHeadend? (definida no build.gradle: productFlavors) */
+    static final boolean TVH = BuildConfig.TVH;
+    static final String SERVER_WORD = TVH ? "servidor TVHeadend" : "box Enigma2";
     private ExecutorService pool;
     /** EPG pedido um bouquet de cada vez, para não sobrecarregar o OpenWebif. */
     private ExecutorService epgPool;
@@ -162,7 +168,7 @@ public class MainActivity extends Activity {
         super.onDestroy();
         ui.removeCallbacksAndMessages(null);
         if (player != null) player.release();
-        if (proxy != null) proxy.stop();
+        if (source != null) source.stop();
         pool.shutdownNow();
         epgPool.shutdownNow();
     }
@@ -244,7 +250,7 @@ public class MainActivity extends Activity {
     }
 
     void play(Model.Channel ch, Model.Group group, boolean keepRetry) {
-        if (ch == null || proxy == null) return;
+        if (ch == null || source == null) return;
         if (playing != null && playing != ch) {
             prevCh = playing;
             prevGroup = playGroup;
@@ -252,9 +258,37 @@ public class MainActivity extends Activity {
         playing = ch;
         playGroup = group != null ? group : (playGroup != null ? playGroup : ch.group);
         if (!keepRetry) retry = 0;
-        player.setMediaItem(MediaItem.fromUri(proxy.url(ch.ref)));
-        player.prepare();
-        player.setPlayWhenReady(true);
+        // o URL pode exigir um pedido ao servidor (ticket do TVHeadend): fora da thread de UI
+        final Object tok = playToken = new Object();
+        final ChannelSource src = source;
+        final Model.Channel fch = ch;
+        pool.execute(new Runnable() {
+            public void run() {
+                String url = null;
+                Exception err = null;
+                try {
+                    url = src.streamUrl(fch.ref);
+                } catch (Exception e) {
+                    err = e;
+                }
+                final String fu = url;
+                final Exception fe = err;
+                ui.post(new Runnable() {
+                    public void run() {
+                        if (tok != playToken || src != source) return;   // entretanto mudou de canal
+                        if (fu == null) {
+                            Log.w(TAG, "stream de " + fch.name, fe);
+                            toast("Não foi possível obter o stream de " + fch.name
+                                    + (fe != null ? " (" + fe.getMessage() + ")" : ""), 6000);
+                            return;
+                        }
+                        player.setMediaItem(MediaItem.fromUri(fu));
+                        player.prepare();
+                        player.setPlayWhenReady(true);
+                    }
+                });
+            }
+        });
         prefs.edit().putString("last", ch.ref).apply();
         showInfobar(5000);
         tv.invalidate();
@@ -350,12 +384,13 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------------ dados
     private void startServices() {
         final String box = prefs.getString("box", "");
-        final int web = prefs.getInt("web_port", 80), stream = prefs.getInt("stream_port", 8001);
+        final int web = prefs.getInt("web_port", TVH ? 9981 : 80), stream = prefs.getInt("stream_port", 8001);
         final String user = prefs.getString("user", ""), pass = prefs.getString("password", "");
         final boolean radio = prefs.getBoolean("radio", false);
-        if (proxy != null) proxy.stop();
+        if (source != null) source.stop();
         if (player != null) player.stop();
         playing = null;
+        playToken = null;
         model.load(new ArrayList<OpenWebif.Bouquet>());
         model.groups.clear();
         picons.clear();
@@ -364,18 +399,19 @@ public class MainActivity extends Activity {
         epgPending.clear();
         status = "A carregar canais de " + box + "…";
         tv.invalidate();
-        owif = new OpenWebif(box, web, user, pass);
-        proxy = new StreamProxy(box, stream, user, pass, proxyLog);
-        final StreamProxy px = proxy;
-        final OpenWebif ow = owif;
+        source = TVH
+                ? new TvhClient(box, web, user, pass, prefs.getString("profile", "pass"))
+                : new E2Source(box, web, stream, user, pass, proxyLog);
+        model.sortAllByNumber = source.sortAllByNumber();
+        final ChannelSource src = source;
         final int gen = ++loadGen;
         pool.execute(new Runnable() {
             public void run() {
                 List<OpenWebif.Bouquet> bq = null;
                 Exception err = null;
                 try {
-                    px.start();
-                    bq = ow.bouquets(radio);
+                    src.start();
+                    bq = src.bouquets(radio);
                 } catch (Exception e) {
                     err = e;
                 }
@@ -393,7 +429,7 @@ public class MainActivity extends Activity {
     private void onChannels(List<OpenWebif.Bouquet> bq, Exception err) {
         if (err != null || bq == null) {
             Log.w(TAG, "canais", err);
-            status = "Não foi possível obter os canais da box:\n" + (err != null ? err.getMessage() : "lista vazia")
+            status = "Não foi possível obter os canais do " + SERVER_WORD + ":\n" + (err != null ? err.getMessage() : "lista vazia")
                     + "\n\nVerifique o IP e as portas em ⚙ Definições (tecla MENU).";
             model.rebuildGroups();
             gi = model.groups.size() - 1;
@@ -424,7 +460,8 @@ public class MainActivity extends Activity {
 
     private void refreshEpg(Model.Channel first) {
         List<String> brefs = new ArrayList<>();
-        for (Model.Group g : model.bouquets) if (g.bref != null) brefs.add(g.bref);
+        for (Model.Group g : model.bouquets)
+            if (g.bref != null && !brefs.contains(g.bref)) brefs.add(g.bref);
         if (first != null && first.group.bref != null && brefs.remove(first.group.bref))
             brefs.add(0, first.group.bref);
         for (String b : brefs) loadNowNext(b);
@@ -435,7 +472,7 @@ public class MainActivity extends Activity {
     private void loadNowNext(final String bref) {
         if (epgPending.contains(bref)) return;
         epgPending.add(bref);
-        final OpenWebif ow = owif;
+        final ChannelSource ow = source;
         final int gen = loadGen;
         model.markEpgTried(bref);
         epgPool.execute(new Runnable() {
@@ -508,7 +545,7 @@ public class MainActivity extends Activity {
         if (o == null) {
             picons.put(ch.key, LOADING);
             final String key = ch.key, ref = ch.ref;
-            final OpenWebif ow = owif;
+            final ChannelSource ow = source;
             pool.execute(new Runnable() {
                 public void run() {
                     byte[] d = ow.picon(ref);
@@ -536,7 +573,7 @@ public class MainActivity extends Activity {
         infobarVisible = false;
         positionVideo();
         tv.invalidate();
-        final OpenWebif ow = owif;
+        final ChannelSource ow = source;
         pool.execute(new Runnable() {
             public void run() {
                 List<Event> l;
@@ -939,28 +976,35 @@ public class MainActivity extends Activity {
         LinearLayout l = new LinearLayout(this);
         l.setOrientation(LinearLayout.VERTICAL);
         l.setPadding(48, 16, 48, 16);
+        final int defPort = TVH ? 9981 : 80;
         Button find = new Button(this);
-        find.setText("Procurar boxes na rede");
+        find.setText(TVH ? "Procurar servidores TVHeadend na rede" : "Procurar boxes na rede");
         l.addView(find);
-        final EditText box = field(l, "…ou escreve o IP da box Enigma2 (ex.: 192.168.1.65)",
+        final EditText box = field(l, TVH ? "…ou escreve o IP do servidor TVHeadend (ex.: 192.168.1.10)"
+                        : "…ou escreve o IP da box Enigma2 (ex.: 192.168.1.65)",
                 prefs.getString("box", ""), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        final EditText web = field(l, "Porta do OpenWebif", String.valueOf(prefs.getInt("web_port", 80)),
-                InputType.TYPE_CLASS_NUMBER);
-        final EditText stream = field(l, "Porta de streaming", String.valueOf(prefs.getInt("stream_port", 8001)),
-                InputType.TYPE_CLASS_NUMBER);
+        final EditText web = field(l, TVH ? "Porta HTTP do TVHeadend" : "Porta do OpenWebif",
+                String.valueOf(prefs.getInt("web_port", defPort)), InputType.TYPE_CLASS_NUMBER);
+        final EditText stream = TVH ? null : field(l, "Porta de streaming",
+                String.valueOf(prefs.getInt("stream_port", 8001)), InputType.TYPE_CLASS_NUMBER);
         final EditText user = field(l, "Utilizador (vazio se não tiver autenticação)", prefs.getString("user", ""),
                 InputType.TYPE_CLASS_TEXT);
         final EditText pass = field(l, "Palavra-passe", prefs.getString("password", ""),
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        final EditText profile = !TVH ? null : field(l,
+                "Perfil de streaming do TVHeadend (normalmente \"pass\")",
+                prefs.getString("profile", "pass"), InputType.TYPE_CLASS_TEXT);
         find.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
-                scanForBoxes(box, user, parseInt(web.getText().toString(), 80));
+                scanForBoxes(box, user, parseInt(web.getText().toString(), defPort));
             }
         });
-        final CheckBox radio = new CheckBox(this);
-        radio.setText("Incluir bouquets de rádio");
-        radio.setChecked(prefs.getBoolean("radio", false));
-        l.addView(radio);
+        final CheckBox radio = TVH ? null : new CheckBox(this);
+        if (radio != null) {
+            radio.setText("Incluir bouquets de rádio");
+            radio.setChecked(prefs.getBoolean("radio", false));
+            l.addView(radio);
+        }
 
         // transparência da barra de informação (0–90 %, em passos de 10)
         final TextView tLabel = new TextView(this);
@@ -990,7 +1034,7 @@ public class MainActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         sv.addView(l);
         AlertDialog.Builder b = new AlertDialog.Builder(this)
-                .setTitle("Definições da box Enigma2")
+                .setTitle(TVH ? "Definições do servidor TVHeadend" : "Definições da box Enigma2")
                 .setView(sv)
                 .setPositiveButton("Guardar", (dlg, w) -> {
                     String oldConn = connectionKey();
@@ -998,11 +1042,14 @@ public class MainActivity extends Activity {
                     prefs.edit()
                             .putInt("infobar_transparency", infobarTransparency)
                             .putString("box", box.getText().toString().trim())
-                            .putInt("web_port", parseInt(web.getText().toString(), 80))
-                            .putInt("stream_port", parseInt(stream.getText().toString(), 8001))
+                            .putInt("web_port", parseInt(web.getText().toString(), defPort))
+                            .putInt("stream_port", stream == null ? 8001 : parseInt(stream.getText().toString(), 8001))
                             .putString("user", user.getText().toString().trim())
                             .putString("password", pass.getText().toString())
-                            .putBoolean("radio", radio.isChecked())
+                            .putString("profile", profile == null ? "pass"
+                                    : (profile.getText().toString().trim().isEmpty() ? "pass"
+                                    : profile.getText().toString().trim()))
+                            .putBoolean("radio", radio != null && radio.isChecked())
                             .apply();
                     if (prefs.getString("box", "").isEmpty()) showSettings(true);
                     else if (firstRun || !oldConn.equals(connectionKey()) || model.bouquets.isEmpty())
@@ -1024,9 +1071,10 @@ public class MainActivity extends Activity {
 
     /** Só é preciso voltar a ligar à box se mudar algum destes valores. */
     private String connectionKey() {
-        return prefs.getString("box", "") + "|" + prefs.getInt("web_port", 80) + "|"
+        return prefs.getString("box", "") + "|" + prefs.getInt("web_port", TVH ? 9981 : 80) + "|"
                 + prefs.getInt("stream_port", 8001) + "|" + prefs.getString("user", "") + "|"
-                + prefs.getString("password", "") + "|" + prefs.getBoolean("radio", false);
+                + prefs.getString("password", "") + "|" + prefs.getBoolean("radio", false) + "|"
+                + prefs.getString("profile", "pass");
     }
 
     /** Varre a rede local à procura de OpenWebif e deixa escolher uma box. */
@@ -1035,20 +1083,20 @@ public class MainActivity extends Activity {
         if (hosts.isEmpty()) {
             new AlertDialog.Builder(this).setTitle("Procurar boxes")
                     .setMessage("Não foi possível obter a rede local deste aparelho (está ligado por Wi-Fi/cabo?). "
-                            + "Escreve o IP da box à mão.")
+                            + "Escreve o IP do " + SERVER_WORD + " à mão.")
                     .setPositiveButton("OK", null).show();
             return;
         }
         final AtomicBoolean cancel = new AtomicBoolean(false);
         final AlertDialog progress = new AlertDialog.Builder(this)
-                .setTitle("A procurar boxes Enigma2…")
+                .setTitle(TVH ? "A procurar servidores TVHeadend…" : "A procurar boxes Enigma2…")
                 .setMessage("0 de " + hosts.size() + " endereços")
                 .setNegativeButton("Cancelar", (d, w) -> cancel.set(true))
                 .setCancelable(false)
                 .show();
         pool.execute(new Runnable() {
             public void run() {
-                final List<BoxScanner.Box> found = BoxScanner.scan(hosts, port, 48, new BoxScanner.Listener() {
+                final List<BoxScanner.Box> found = BoxScanner.scan(hosts, port, 48, TVH, new BoxScanner.Listener() {
                     public void progress(final int done, final int total) {
                         if (done % 8 != 0 && done != total) return;
                         ui.post(new Runnable() {
@@ -1073,21 +1121,23 @@ public class MainActivity extends Activity {
                                  final EditText userField, int port) {
         if (found.isEmpty()) {
             new AlertDialog.Builder(this).setTitle("Procurar boxes")
-                    .setMessage("Nenhuma box com OpenWebif encontrada na porta " + port + ".\n\n"
-                            + "Confirma que a box está ligada e na mesma rede, ou escreve o IP à mão.")
+                    .setMessage((TVH ? "Nenhum servidor TVHeadend" : "Nenhuma box com OpenWebif")
+                            + " encontrado na porta " + port + ".\n\n"
+                            + "Confirma que está ligado e na mesma rede, ou escreve o IP à mão.")
                     .setPositiveButton("OK", null).show();
             return;
         }
         String[] labels = new String[found.size()];
         for (int i = 0; i < labels.length; i++) labels[i] = found.get(i).label();
         new AlertDialog.Builder(this)
-                .setTitle(found.size() == 1 ? "Box encontrada" : found.size() + " boxes encontradas")
+                .setTitle(found.size() == 1 ? (TVH ? "Servidor encontrado" : "Box encontrada")
+                        : found.size() + (TVH ? " servidores encontrados" : " boxes encontradas"))
                 .setItems(labels, (d, which) -> {
                     BoxScanner.Box b = found.get(which);
                     boxField.setText(b.ip);
                     if (b.needsAuth) {
-                        toast("Esta box pede utilizador e palavra-passe", 4000);
-                        if (userField.getText().toString().isEmpty()) userField.setText("root");
+                        toast("Este " + (TVH ? "servidor" : "box") + " pede utilizador e palavra-passe", 4000);
+                        if (!TVH && userField.getText().toString().isEmpty()) userField.setText("root");
                     }
                 })
                 .setNegativeButton("Cancelar", null)

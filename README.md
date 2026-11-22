@@ -1,18 +1,19 @@
 # e2player para Android TV
 
-Player Android TV para streaming de boxes Enigma2, com o corretor de
+Player Android TV para streaming de boxes Enigma2, com corretor de
 PAT/PMT (e2proxy) embutido. Motor de vídeo: Media3 / ExoPlayer.
 
 ## Instalar na Android TV
 
-- Mais simples: instala a app **Downloader** (AFTVnews) na TV, ou **Send Files to TV**,
+- Instala a app **Downloader** (AFTVnews) na TV, ou **Send Files to TV**,
   e passa o APK; ou copia-o para uma pen USB e abre-o com um gestor de ficheiros.
 - Em *Definições › Segurança / Apps › Fontes desconhecidas* permite a instalação
   para a app que estás a usar.
 - Com adb: `adb connect IP_DA_TV` e `adb install app-debug.apk`.
 
-Na primeira execução a app pede o IP da box, portas e (se houver) utilizador e
-palavra-passe do OpenWebif. Podes alterar mais tarde em **⚙ Definições** (último
+Na primeira execução a app pede a box: usa **Procurar boxes na rede** (deteta
+automaticamente as boxes com OpenWebif na tua rede local) ou escreve o IP à mão.
+Também pede as portas e, se houver, o utilizador e a palavra-passe do OpenWebif. Podes alterar mais tarde em **⚙ Definições** (último
 grupo da lista) ou com a tecla MENU.
 
 ## Comando
@@ -36,9 +37,12 @@ grupo da lista) ou com a tecla MENU.
 - `core/TsFixer.java` – corretor de PAT/PMT (porte do e2proxy.py)
 - `core/StreamProxy.java` – servidor HTTP local (127.0.0.1) que passa o stream pelo corretor
 - `core/OpenWebif.java` – bouquets, EPG e picons via API XML do OpenWebif
+- `core/BoxScanner.java` – deteção automática de boxes OpenWebif na rede local
 - `core/Model.java` – grupos, numeração, favoritos, EPG agora/seguinte
 - `MainActivity.java` – player, teclas, definições
 - `TvView.java` – desenho da interface (listas, info, infobar, guia)
+
+## Screenshots
 
 <img width="1920" height="1079" alt="channel_list_with_preview" src="https://github.com/user-attachments/assets/61124100-95d8-4821-83d9-8875954d5623" />
 

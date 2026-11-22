@@ -410,8 +410,28 @@ public class TvView extends View {
     private void drawInfobar(Canvas c) {
         RectF r = infobar;
         Model.Channel ch = a.playing;
-        round(c, r.left, r.top, r.right, r.bottom, PANEL);
+        // fundo com a transparência escolhida nas definições (0 = opaco)
+        int alpha = Math.round(255 * (100 - a.infobarTransparency) / 100f);
+        round(c, r.left, r.top, r.right, r.bottom, (PANEL & 0x00FFFFFF) | (alpha << 24));
         rect(c, r.left, r.top, r.left + 6, r.bottom, SEL);
+        boolean shadow = a.infobarTransparency > 0;
+        if (shadow) setShadow(true);
+        try {
+            drawInfobarContent(c, r, ch);
+        } finally {
+            if (shadow) setShadow(false);
+        }
+    }
+
+    /** Sombra no texto para continuar legível sobre o vídeo quando o fundo é transparente. */
+    private void setShadow(boolean on) {
+        for (TextPaint p : new TextPaint[]{tSmall, tNorm, tBold, tBig, tHuge}) {
+            if (on) p.setShadowLayer(3f, 1.5f, 1.5f, 0xE0000000);
+            else p.clearShadowLayer();
+        }
+    }
+
+    private void drawInfobarContent(Canvas c, RectF r, Model.Channel ch) {
         float pad = r.height() * 0.12f;
         String num = String.valueOf(ch.num);
         float x = r.left + pad + 6;

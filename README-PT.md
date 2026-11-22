@@ -1,11 +1,16 @@
-# e2player para Android TV
+# e2player e TVH Player para Android TV
 
-Player Android TV para streaming de boxes Enigma2, com corretor de
-PAT/PMT (e2proxy) embutido. Motor de vídeo: Media3 / ExoPlayer.
+Players de TV ao estilo MAG (Infomir), com a mesma interface e duas fontes de canais:
+
+- **e2player** – boxes Enigma2 (OpenWebif), com o corretor de PAT/PMT (e2proxy) embutido.
+- **TVH Player** – servidores TVHeadend.
+
+O mesmo projeto gera as duas apps (variantes `enigma2` e `tvheadend`); podem estar
+instaladas ao mesmo tempo. Motor de vídeo: Media3 / ExoPlayer (+ FFmpeg para MP2/AC-3).
 
 ## Instalar na Android TV
 
-- Instala a app **Downloader** (AFTVnews) na TV, ou **Send Files to TV**,
+- Mais simples: instala a app **Downloader** (AFTVnews) na TV, ou **Send Files to TV**,
   e passa o APK; ou copia-o para uma pen USB e abre-o com um gestor de ficheiros.
 - Em *Definições › Segurança / Apps › Fontes desconhecidas* permite a instalação
   para a app que estás a usar.
@@ -15,6 +20,15 @@ Na primeira execução a app pede a box: usa **Procurar boxes na rede** (deteta
 automaticamente as boxes com OpenWebif na tua rede local) ou escreve o IP à mão.
 Também pede as portas e, se houver, o utilizador e a palavra-passe do OpenWebif. Podes alterar mais tarde em **⚙ Definições** (último
 grupo da lista) ou com a tecla MENU.
+
+## TVH Player (TVHeadend)
+
+- Grupos = etiquetas de canais (channel tags) do TVHeadend; números = os do TVHeadend.
+- EPG agora/seguinte e guia completo vêm do TVHeadend; ícones da imagecache.
+- Definições: IP (ou **Procurar servidores TVHeadend na rede**), porta HTTP (9981),
+  utilizador, palavra-passe e perfil de streaming (`pass` por omissão).
+- Com palavra-passe, cada stream usa um *ticket* do TVHeadend (a palavra-passe não vai no URL).
+  O utilizador precisa de permissão de streaming no TVHeadend.
 
 ## Comando
 
@@ -38,12 +52,9 @@ grupo da lista) ou com a tecla MENU.
 - `core/StreamProxy.java` – servidor HTTP local (127.0.0.1) que passa o stream pelo corretor
 - `core/OpenWebif.java` – bouquets, EPG e picons via API XML do OpenWebif
 - `core/BoxScanner.java` – deteção automática de boxes OpenWebif na rede local
+- `core/ChannelSource.java` – interface comum das fontes; `core/E2Source.java` (Enigma2)
+- `core/TvhClient.java` – fonte TVHeadend (API JSON, autenticação digest, tickets)
+- `core/Json.java` – leitor JSON mínimo
 - `core/Model.java` – grupos, numeração, favoritos, EPG agora/seguinte
 - `MainActivity.java` – player, teclas, definições
 - `TvView.java` – desenho da interface (listas, info, infobar, guia)
-
-## Screenshots
-
-<img width="1920" height="1079" alt="channel_list_with_preview" src="https://github.com/user-attachments/assets/61124100-95d8-4821-83d9-8875954d5623" />
-
-<img width="1920" height="1079" alt="channel_streaming" src="https://github.com/user-attachments/assets/0ef1e0be-34e3-4d27-9923-dad6441b05db" />

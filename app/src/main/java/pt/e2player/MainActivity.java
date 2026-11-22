@@ -22,6 +22,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 
 import androidx.annotation.OptIn;
@@ -79,6 +80,8 @@ public class MainActivity extends Activity {
     String toastText;
     long toastUntil;
     String numbuf = "";
+    /** Transparência do fundo da barra de informação, em % (0 = opaca). */
+    int infobarTransparency;
 
     private SharedPreferences prefs;
     private FrameLayout root;
@@ -88,7 +91,7 @@ public class MainActivity extends Activity {
     private StreamProxy proxy;
     private OpenWebif owif;
     private ExecutorService pool;
-    /** EPG pedido um bouquet de cada vez, para não sobrecarregar o OpenWebif.  */
+    /** EPG pedido um bouquet de cada vez, para não sobrecarregar o OpenWebif. */
     private ExecutorService epgPool;
     private final Map<String, Long> epgOk = new HashMap<>();
     private final Map<String, Integer> epgFail = new HashMap<>();
@@ -112,6 +115,7 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         prefs = getSharedPreferences("e2player", MODE_PRIVATE);
+        infobarTransparency = prefs.getInt("infobar_transparency", 0);
         String favs = prefs.getString("favorites", "");
         for (String f : favs.split("\n")) if (!f.trim().isEmpty()) model.favorites.add(f.trim());
 
@@ -957,13 +961,42 @@ public class MainActivity extends Activity {
         radio.setText("Incluir bouquets de rádio");
         radio.setChecked(prefs.getBoolean("radio", false));
         l.addView(radio);
+
+        // transparência da barra de informação (0–90 %, em passos de 10)
+        final TextView tLabel = new TextView(this);
+        tLabel.setPadding(0, 24, 0, 2);
+        l.addView(tLabel);
+        final SeekBar tBar = new SeekBar(this);
+        tBar.setMax(9);
+        tBar.setProgress(Math.max(0, Math.min(9, infobarTransparency / 10)));
+        tBar.setFocusable(true);
+        l.addView(tBar);
+        final TextView tHint = new TextView(this);
+        tHint.setText("Usa ◀ ▶ do comando para ajustar");
+        l.addView(tHint);
+        setTransparencyLabel(tLabel, tBar.getProgress() * 10);
+        tBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar s, int v, boolean fromUser) {
+                setTransparencyLabel(tLabel, v * 10);
+            }
+
+            public void onStartTrackingTouch(SeekBar s) {
+            }
+
+            public void onStopTrackingTouch(SeekBar s) {
+            }
+        });
+
         ScrollView sv = new ScrollView(this);
         sv.addView(l);
         AlertDialog.Builder b = new AlertDialog.Builder(this)
                 .setTitle("Definições da box Enigma2")
                 .setView(sv)
                 .setPositiveButton("Guardar", (dlg, w) -> {
+                    String oldConn = connectionKey();
+                    infobarTransparency = tBar.getProgress() * 10;
                     prefs.edit()
+                            .putInt("infobar_transparency", infobarTransparency)
                             .putString("box", box.getText().toString().trim())
                             .putInt("web_port", parseInt(web.getText().toString(), 80))
                             .putInt("stream_port", parseInt(stream.getText().toString(), 8001))
@@ -972,13 +1005,28 @@ public class MainActivity extends Activity {
                             .putBoolean("radio", radio.isChecked())
                             .apply();
                     if (prefs.getString("box", "").isEmpty()) showSettings(true);
-                    else startServices();
+                    else if (firstRun || !oldConn.equals(connectionKey()) || model.bouquets.isEmpty())
+                        startServices();
+                    else if (mode == FULL) showInfobar(5000);   // mostra o resultado
+                    else tv.invalidate();
                 })
                 .setNegativeButton(firstRun ? "Sair" : "Cancelar", (dlg, w) -> {
                     if (firstRun) finish();
                 });
         b.setCancelable(!firstRun);
         b.show();
+    }
+
+    private static void setTransparencyLabel(TextView t, int pct) {
+        t.setText("Transparência da barra de informação: " + pct + "%"
+                + (pct == 0 ? " (opaca)" : ""));
+    }
+
+    /** Só é preciso voltar a ligar à box se mudar algum destes valores. */
+    private String connectionKey() {
+        return prefs.getString("box", "") + "|" + prefs.getInt("web_port", 80) + "|"
+                + prefs.getInt("stream_port", 8001) + "|" + prefs.getString("user", "") + "|"
+                + prefs.getString("password", "") + "|" + prefs.getBoolean("radio", false);
     }
 
     /** Varre a rede local à procura de OpenWebif e deixa escolher uma box. */

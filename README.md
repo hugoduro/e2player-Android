@@ -40,6 +40,6 @@ grupo da lista) ou com a tecla MENU.
 - `MainActivity.java` – player, teclas, definições
 - `TvView.java` – desenho da interface (listas, info, infobar, guia)
 
-<img width="1920" height="1079" alt="channel_list_with_preview" src="https://github.com/user-attachments/assets/722a33cc-27cb-45d5-9067-de2902c247c4" />
+<img width="1920" height="1079" alt="channel_list_with_preview" src="https://github.com/user-attachments/assets/61124100-95d8-4821-83d9-8875954d5623" />
 
 <img width="1920" height="1079" alt="channel_streaming" src="https://github.com/user-attachments/assets/0ef1e0be-34e3-4d27-9923-dad6441b05db" />

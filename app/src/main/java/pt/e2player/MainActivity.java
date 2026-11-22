@@ -16,6 +16,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -49,7 +50,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import pt.e2player.core.BoxScanner;
 import pt.e2player.core.Event;
 import pt.e2player.core.Model;
 import pt.e2player.core.OpenWebif;
@@ -932,8 +935,11 @@ public class MainActivity extends Activity {
         LinearLayout l = new LinearLayout(this);
         l.setOrientation(LinearLayout.VERTICAL);
         l.setPadding(48, 16, 48, 16);
-        final EditText box = field(l, "IP da box Enigma2 (ex.: 192.168.1.65)", prefs.getString("box", ""),
-                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        Button find = new Button(this);
+        find.setText("Procurar boxes na rede");
+        l.addView(find);
+        final EditText box = field(l, "…ou escreve o IP da box Enigma2 (ex.: 192.168.1.65)",
+                prefs.getString("box", ""), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         final EditText web = field(l, "Porta do OpenWebif", String.valueOf(prefs.getInt("web_port", 80)),
                 InputType.TYPE_CLASS_NUMBER);
         final EditText stream = field(l, "Porta de streaming", String.valueOf(prefs.getInt("stream_port", 8001)),
@@ -942,6 +948,11 @@ public class MainActivity extends Activity {
                 InputType.TYPE_CLASS_TEXT);
         final EditText pass = field(l, "Palavra-passe", prefs.getString("password", ""),
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        find.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                scanForBoxes(box, user, parseInt(web.getText().toString(), 80));
+            }
+        });
         final CheckBox radio = new CheckBox(this);
         radio.setText("Incluir bouquets de rádio");
         radio.setChecked(prefs.getBoolean("radio", false));
@@ -968,6 +979,71 @@ public class MainActivity extends Activity {
                 });
         b.setCancelable(!firstRun);
         b.show();
+    }
+
+    /** Varre a rede local à procura de OpenWebif e deixa escolher uma box. */
+    private void scanForBoxes(final EditText boxField, final EditText userField, final int port) {
+        final List<String> hosts = BoxScanner.localHosts();
+        if (hosts.isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("Procurar boxes")
+                    .setMessage("Não foi possível obter a rede local deste aparelho (está ligado por Wi-Fi/cabo?). "
+                            + "Escreve o IP da box à mão.")
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
+        final AtomicBoolean cancel = new AtomicBoolean(false);
+        final AlertDialog progress = new AlertDialog.Builder(this)
+                .setTitle("A procurar boxes Enigma2…")
+                .setMessage("0 de " + hosts.size() + " endereços")
+                .setNegativeButton("Cancelar", (d, w) -> cancel.set(true))
+                .setCancelable(false)
+                .show();
+        pool.execute(new Runnable() {
+            public void run() {
+                final List<BoxScanner.Box> found = BoxScanner.scan(hosts, port, 48, new BoxScanner.Listener() {
+                    public void progress(final int done, final int total) {
+                        if (done % 8 != 0 && done != total) return;
+                        ui.post(new Runnable() {
+                            public void run() {
+                                progress.setMessage(done + " de " + total + " endereços  (porta " + port + ")");
+                            }
+                        });
+                    }
+                }, cancel);
+                ui.post(new Runnable() {
+                    public void run() {
+                        if (progress.isShowing()) progress.dismiss();
+                        if (cancel.get()) return;
+                        showScanResults(found, boxField, userField, port);
+                    }
+                });
+            }
+        });
+    }
+
+    private void showScanResults(final List<BoxScanner.Box> found, final EditText boxField,
+                                 final EditText userField, int port) {
+        if (found.isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("Procurar boxes")
+                    .setMessage("Nenhuma box com OpenWebif encontrada na porta " + port + ".\n\n"
+                            + "Confirma que a box está ligada e na mesma rede, ou escreve o IP à mão.")
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
+        String[] labels = new String[found.size()];
+        for (int i = 0; i < labels.length; i++) labels[i] = found.get(i).label();
+        new AlertDialog.Builder(this)
+                .setTitle(found.size() == 1 ? "Box encontrada" : found.size() + " boxes encontradas")
+                .setItems(labels, (d, which) -> {
+                    BoxScanner.Box b = found.get(which);
+                    boxField.setText(b.ip);
+                    if (b.needsAuth) {
+                        toast("Esta box pede utilizador e palavra-passe", 4000);
+                        if (userField.getText().toString().isEmpty()) userField.setText("root");
+                    }
+                })
+                .setNegativeButton("Cancelar", null)
+                .show();
     }
 
     private static int parseInt(String s, int def) {
